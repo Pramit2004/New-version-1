@@ -18,6 +18,10 @@ from plotly.subplots import make_subplots
 import seaborn as sns
 import matplotlib.pyplot as plt
 import warnings
+from scipy import stats
+from sklearn.feature_selection import mutual_info_score
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+from sklearn.preprocessing import LabelEncoder
 warnings.filterwarnings('ignore')
 
 logger = logging.getLogger(__name__)
@@ -350,37 +354,47 @@ class DataDetectiveAgent:
         data_type = data_profile.get('data_type', 'unknown')
         
         if data_type == 'tabular':
-            df = pd.read_csv(data_path)
-            
-            # Completeness
-            total_cells = df.shape[0] * df.shape[1]
-            missing_cells = df.isnull().sum().sum()
-            completeness = 1 - (missing_cells / total_cells)
-            
-            # Consistency
-            consistency_score = self._assess_consistency(df)
-            
-            # Uniqueness
-            uniqueness_score = self._assess_uniqueness(df)
-            
-            # Validity
-            validity_score = self._assess_validity(df)
-            
-            # Identify quality issues
-            if completeness < 0.95:
-                quality_issues.append(f"Missing data: {missing_cells} cells ({100*(1-completeness):.1f}%)")
-                recommendations.append("Consider imputation strategies or data collection improvements")
-            
-            if consistency_score < 0.8:
-                quality_issues.append("Data inconsistencies detected")
-                recommendations.append("Standardize data formats and validation rules")
-            
-            if uniqueness_score < 0.9:
-                quality_issues.append("Duplicate records detected")
-                recommendations.append("Implement deduplication process")
+            try:
+                df = pd.read_csv(data_path)
                 
-            overall_score = np.mean([completeness, consistency_score, uniqueness_score, validity_score])
-            
+                # Completeness
+                total_cells = df.shape[0] * df.shape[1]
+                missing_cells = df.isnull().sum().sum()
+                completeness = 1 - (missing_cells / total_cells) if total_cells > 0 else 1
+                
+                # Consistency
+                consistency_score = self._assess_consistency(df)
+                
+                # Uniqueness
+                uniqueness_score = self._assess_uniqueness(df)
+                
+                # Validity
+                validity_score = self._assess_validity(df)
+                
+                # Identify quality issues
+                if completeness < 0.95:
+                    quality_issues.append(f"Missing data: {missing_cells} cells ({100*(1-completeness):.1f}%)")
+                    recommendations.append("Consider imputation strategies or data collection improvements")
+                
+                if consistency_score < 0.8:
+                    quality_issues.append("Data inconsistencies detected")
+                    recommendations.append("Standardize data formats and validation rules")
+                
+                if uniqueness_score < 0.9:
+                    quality_issues.append("Duplicate records detected")
+                    recommendations.append("Implement deduplication process")
+                    
+                overall_score = np.mean([completeness, consistency_score, uniqueness_score, validity_score])
+                
+            except Exception as e:
+                logger.error(f"Quality assessment failed: {e}")
+                completeness = 0.5
+                consistency_score = 0.5
+                uniqueness_score = 0.5
+                validity_score = 0.5
+                overall_score = 0.5
+                quality_issues.append(f"Quality assessment failed: {str(e)}")
+                
         else:
             # For non-tabular data, use simplified quality assessment
             completeness = 1.0 if 'error' not in data_profile else 0.0
@@ -399,6 +413,74 @@ class DataDetectiveAgent:
             recommendations=recommendations
         )
     
+    def _assess_consistency(self, df: pd.DataFrame) -> float:
+        """Assess data consistency"""
+        try:
+            consistency_scores = []
+            
+            # Check for consistent data types within columns
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    # For string columns, check format consistency
+                    non_null_values = df[col].dropna()
+                    if len(non_null_values) > 0:
+                        # Check if values follow consistent patterns
+                        str_lengths = non_null_values.astype(str).str.len()
+                        length_consistency = 1 - (str_lengths.std() / str_lengths.mean()) if str_lengths.mean() > 0 else 1
+                        consistency_scores.append(min(1.0, max(0.0, length_consistency)))
+                elif pd.api.types.is_numeric_dtype(df[col]):
+                    # For numeric columns, check for reasonable ranges
+                    non_null_values = df[col].dropna()
+                    if len(non_null_values) > 0:
+                        q1, q3 = non_null_values.quantile([0.25, 0.75])
+                        iqr = q3 - q1
+                        outliers = non_null_values[(non_null_values < q1 - 1.5*iqr) | (non_null_values > q3 + 1.5*iqr)]
+                        consistency = 1 - (len(outliers) / len(non_null_values))
+                        consistency_scores.append(consistency)
+            
+            return np.mean(consistency_scores) if consistency_scores else 0.8
+            
+        except Exception as e:
+            logger.warning(f"Consistency assessment failed: {e}")
+            return 0.8
+
+    def _assess_uniqueness(self, df: pd.DataFrame) -> float:
+        """Assess data uniqueness"""
+        try:
+            total_rows = len(df)
+            duplicate_rows = df.duplicated().sum()
+            uniqueness = 1 - (duplicate_rows / total_rows) if total_rows > 0 else 1
+            return uniqueness
+        except Exception as e:
+            logger.warning(f"Uniqueness assessment failed: {e}")
+            return 0.9
+    
+    def _assess_validity(self, df: pd.DataFrame) -> float:
+        """Assess data validity"""
+        try:
+            validity_scores = []
+            
+            for col in df.columns:
+                col_validity = 1.0
+                
+                # Check for obvious invalid values
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    # Check for infinite values
+                    invalid_count = np.isinf(df[col]).sum()
+                    col_validity = 1 - (invalid_count / len(df))
+                elif df[col].dtype == 'object':
+                    # Check for empty strings or whitespace-only values
+                    invalid_count = df[col].astype(str).str.strip().eq('').sum()
+                    col_validity = 1 - (invalid_count / len(df))
+                
+                validity_scores.append(col_validity)
+            
+            return np.mean(validity_scores) if validity_scores else 0.9
+            
+        except Exception as e:
+            logger.warning(f"Validity assessment failed: {e}")
+            return 0.9
+    
     def _generate_deep_insights(self, data_path: str, data_profile: Dict[str, Any], 
                                target_column: str = None, user_context: str = "") -> List[DataInsight]:
         """Generate deep insights using AI and statistical analysis"""
@@ -411,8 +493,9 @@ class DataDetectiveAgent:
         insights.extend(self._generate_pattern_insights(data_path, data_profile))
         
         # AI-powered insights
-        ai_insights = self._generate_ai_insights(data_profile, user_context)
-        insights.extend(ai_insights)
+        if self.llm:
+            ai_insights = self._generate_ai_insights(data_profile, user_context)
+            insights.extend(ai_insights)
         
         # Business insights
         insights.extend(self._generate_business_insights(data_profile, user_context))
@@ -427,7 +510,7 @@ class DataDetectiveAgent:
             # Distribution insights
             numeric_stats = data_profile.get('numeric_statistics', {})
             for col, stats in numeric_stats.items():
-                if stats['skewness'] > 1:
+                if stats.get('skewness', 0) > 1:
                     insights.append(DataInsight(
                         insight_type="distribution",
                         description=f"Column '{col}' is highly right-skewed (skewness: {stats['skewness']:.2f})",
@@ -436,13 +519,14 @@ class DataDetectiveAgent:
                         evidence={"skewness": stats['skewness'], "column": col}
                     ))
                 
-                if stats['outliers_iqr'] > len(data_profile.get('numeric_columns', [])) * 0.05:
+                outliers = stats.get('outliers_iqr', 0)
+                if outliers > len(data_profile.get('numeric_columns', [])) * 0.05:
                     insights.append(DataInsight(
                         insight_type="outliers",
-                        description=f"Column '{col}' has {stats['outliers_iqr']} outliers",
+                        description=f"Column '{col}' has {outliers} outliers",
                         importance="high",
                         actionable_recommendation="Investigate outliers - may indicate data quality issues or interesting patterns",
-                        evidence={"outlier_count": stats['outliers_iqr'], "column": col}
+                        evidence={"outlier_count": outliers, "column": col}
                     ))
             
             # Correlation insights
@@ -458,8 +542,29 @@ class DataDetectiveAgent:
         
         return insights
     
+    def _generate_pattern_insights(self, data_path: str, data_profile: Dict[str, Any]) -> List[DataInsight]:
+        """Generate pattern-based insights"""
+        insights = []
+        
+        # Add basic pattern insights
+        if data_profile.get('data_type') == 'tabular':
+            shape = data_profile.get('shape', (0, 0))
+            if shape[1] > 100:
+                insights.append(DataInsight(
+                    insight_type="dimensionality",
+                    description=f"High dimensional data with {shape[1]} features",
+                    importance="medium",
+                    actionable_recommendation="Consider dimensionality reduction techniques",
+                    evidence={"feature_count": shape[1]}
+                ))
+        
+        return insights
+    
     def _generate_ai_insights(self, data_profile: Dict[str, Any], user_context: str) -> List[DataInsight]:
         """Generate AI-powered insights"""
+        if not self.llm:
+            return []
+            
         try:
             prompt = f"""
             As a senior data scientist, analyze this data profile and provide 3-5 key insights:
@@ -506,6 +611,279 @@ class DataDetectiveAgent:
         except Exception as e:
             logger.warning(f"AI insight generation failed: {e}")
             return []
+        
+    def _generate_business_insights(self, data_profile: Dict[str, Any], user_context: str) -> List[DataInsight]:
+        """Generate business-focused insights"""
+        insights = []
+        
+        # Add basic business insights based on data characteristics
+        if data_profile.get('data_type') == 'tabular':
+            missing_data = data_profile.get('missing_data', {})
+            total_missing = sum(missing_data.values())
+            
+            if total_missing > 0:
+                insights.append(DataInsight(
+                    insight_type="business_risk",
+                    description=f"Data contains {total_missing} missing values that could impact analysis",
+                    importance="medium",
+                    actionable_recommendation="Implement data collection improvements to reduce missing data",
+                    evidence={"missing_count": total_missing}
+                ))
+        
+        return insights
+    
+    def _detect_domain_patterns(self, data_path: str, data_profile: Dict[str, Any], user_context: str) -> Dict[str, Any]:
+        """Detect domain-specific patterns"""
+        patterns = {
+            'detected_domain': 'general',
+            'confidence': 0.5,
+            'patterns': []
+        }
+        
+        # Simple domain detection based on column names and context
+        if data_profile.get('data_type') == 'tabular':
+            columns = data_profile.get('categorical_columns', []) + data_profile.get('numeric_columns', [])
+            
+            # Financial domain
+            financial_keywords = ['price', 'amount', 'balance', 'transaction', 'account', 'payment']
+            if any(keyword in ' '.join(columns).lower() for keyword in financial_keywords):
+                patterns['detected_domain'] = 'financial'
+                patterns['confidence'] = 0.8
+        
+        return patterns
+    
+    def _detect_anomalies_advanced(self, data_path: str, data_profile: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Advanced anomaly detection across multiple data types"""
+        anomalies = []
+        
+        try:
+            if data_profile.get('data_type') == 'tabular':
+                df = pd.read_csv(data_path)
+                
+                # Statistical anomalies in numeric columns
+                for col in df.select_dtypes(include=[np.number]).columns:
+                    # IQR-based anomalies
+                    Q1 = df[col].quantile(0.25)
+                    Q3 = df[col].quantile(0.75)
+                    IQR = Q3 - Q1
+                    outliers = df[col][(df[col] < Q1 - 1.5 * IQR) | (df[col] > Q3 + 1.5 * IQR)]
+                    
+                    if len(outliers) > 0:
+                        anomalies.append({
+                            'type': 'statistical_outlier',
+                            'column': col,
+                            'method': 'IQR',
+                            'count': len(outliers),
+                            'values': outliers.tolist()[:5],  # First 5 anomalous values
+                            'severity': 'high' if len(outliers) > len(df) * 0.05 else 'medium'
+                        })
+                    
+                    # Z-score anomalies
+                    z_scores = np.abs((df[col] - df[col].mean()) / df[col].std())
+                    z_outliers = df[col][z_scores > 3]
+                    
+                    if len(z_outliers) > 0:
+                        anomalies.append({
+                            'type': 'statistical_outlier',
+                            'column': col,
+                            'method': 'z_score',
+                            'count': len(z_outliers),
+                            'values': z_outliers.tolist()[:5],
+                            'severity': 'high' if len(z_outliers) > len(df) * 0.05 else 'medium'
+                        })
+                
+                # Pattern anomalies in categorical columns
+                for col in df.select_dtypes(include=['object']).columns:
+                    value_counts = df[col].value_counts()
+                    rare_values = value_counts[value_counts < len(df) * 0.01]
+                    
+                    if len(rare_values) > 0:
+                        anomalies.append({
+                            'type': 'rare_category',
+                            'column': col,
+                            'count': len(rare_values),
+                            'values': rare_values.index.tolist()[:5],
+                            'severity': 'medium'
+                        })
+                
+                # Time series anomalies if applicable
+                if data_profile.get('is_time_series', False):
+                    datetime_cols = df.select_dtypes(include=['datetime']).columns
+                    if len(datetime_cols) > 0:
+                        for col in datetime_cols:
+                            gaps = self._detect_time_gaps(df[col])
+                            if gaps:
+                                anomalies.append({
+                                    'type': 'time_gap',
+                                    'column': col,
+                                    'count': len(gaps),
+                                    'gaps': gaps[:5],
+                                    'severity': 'high'
+                                })
+            
+            elif data_profile.get('data_type') == 'image':
+                # Detect image anomalies
+                brightness = data_profile.get('opencv_analysis', {}).get('brightness', 0)
+                contrast = data_profile.get('opencv_analysis', {}).get('contrast', 0)
+                
+                if brightness < 30 or brightness > 225:
+                    anomalies.append({
+                        'type': 'image_quality',
+                        'issue': 'extreme_brightness',
+                        'value': brightness,
+                        'severity': 'medium'
+                    })
+                    
+                if contrast < 20:
+                    anomalies.append({
+                        'type': 'image_quality',
+                        'issue': 'low_contrast',
+                        'value': contrast,
+                        'severity': 'medium'
+                    })
+            
+            elif data_profile.get('data_type') == 'audio':
+                # Detect audio anomalies
+                silence_ratio = data_profile.get('silence_ratio', 0)
+                if silence_ratio > 0.3:
+                    anomalies.append({
+                        'type': 'audio_quality',
+                        'issue': 'high_silence',
+                        'value': silence_ratio,
+                        'severity': 'medium'
+                    })
+        
+        except Exception as e:
+            logger.error(f"Anomaly detection failed: {e}")
+            anomalies.append({
+                'type': 'error',
+                'description': f"Anomaly detection failed: {str(e)}",
+                'severity': 'high'
+            })
+        
+        return anomalies
+
+    def _detect_time_gaps(self, datetime_series: pd.Series) -> List[Dict[str, Any]]:
+        """Helper method to detect gaps in time series data"""
+        gaps = []
+        sorted_dates = datetime_series.sort_values()
+        
+        # Calculate time differences
+        time_diffs = sorted_dates.diff()
+        median_diff = time_diffs.median()
+        
+        # Detect gaps > 3x median difference
+        large_gaps = time_diffs[time_diffs > 3 * median_diff]
+        
+        for idx in large_gaps.index:
+            gaps.append({
+                'start': str(sorted_dates[idx - 1]),
+                'end': str(sorted_dates[idx]),
+                'gap_size': str(time_diffs[idx])
+            })
+        
+        return gaps
+
+    def _calculate_feature_importance(self, data_path: str, data_profile: Dict[str, Any], target_column: str = None) -> Dict[str, float]:
+            """Calculate feature importance scores using multiple methods"""
+            importance_scores = {}
+            
+            try:
+                if data_profile.get('data_type') == 'tabular':
+                    df = pd.read_csv(data_path)
+                    
+                    # Skip if no target column provided
+                    if target_column is None:
+                        return {'error': 'No target column specified for importance calculation'}
+                    
+                    if target_column not in df.columns:
+                        return {'error': f'Target column {target_column} not found in data'}
+                    
+                    # Select numeric and categorical columns
+                    numeric_cols = df.select_dtypes(include=[np.number]).columns
+                    cat_cols = df.select_dtypes(include=['object']).columns
+                    
+                    # 1. Correlation-based importance for numeric features
+                    for col in numeric_cols:
+                        if col != target_column and pd.api.types.is_numeric_dtype(df[target_column]):
+                            corr = abs(df[col].corr(df[target_column]))
+                            importance_scores[col] = float(corr)
+                    
+                    # 2. Mutual information for categorical features
+                    for col in cat_cols:
+                        if col != target_column:
+                            # Convert categorical variables to codes
+                            col_encoded = df[col].astype('category').cat.codes
+                            target_encoded = df[target_column].astype('category').cat.codes if not pd.api.types.is_numeric_dtype(df[target_column]) else df[target_column]
+                            mi_score = mutual_info_score(col_encoded, target_encoded)
+                            importance_scores[col] = float(mi_score)
+                    
+                    # 3. Random Forest importance if target is suitable
+                    try:
+                        
+                        # Prepare features
+                        features_df = df.select_dtypes(include=[np.number]).copy()
+                        
+                        # Encode categorical features if any
+                        for col in cat_cols:
+                            le = LabelEncoder()
+                            features_df[col] = le.fit_transform(df[col].fillna('missing'))
+                        
+                        if pd.api.types.is_numeric_dtype(df[target_column]):
+                            model = RandomForestRegressor(n_estimators=50, random_state=42)
+                        else:
+                            model = RandomForestClassifier(n_estimators=50, random_state=42)
+                        
+                        # Remove target from features if present
+                        if target_column in features_df.columns:
+                            features_df = features_df.drop(target_column, axis=1)
+                        
+                        # Fit model
+                        target = df[target_column]
+                        if not pd.api.types.is_numeric_dtype(target):
+                            target = LabelEncoder().fit_transform(target)
+                        
+                        model.fit(features_df, target)
+                        
+                        # Get feature importance
+                        for col, importance in zip(features_df.columns, model.feature_importances_):
+                            if col in importance_scores:
+                                importance_scores[col] = (importance_scores[col] + float(importance)) / 2
+                            else:
+                                importance_scores[col] = float(importance)
+                                
+                    except Exception as e:
+                        logger.warning(f"Random Forest importance calculation failed: {e}")
+                
+                elif data_profile.get('data_type') == 'image':
+                    # For image data, calculate importance based on edge density and contrast
+                    importance_scores['edge_density'] = float(data_profile.get('edge_density', 0))
+                    importance_scores['contrast'] = float(data_profile.get('opencv_analysis', {}).get('contrast', 0)) / 255.0
+                    
+                elif data_profile.get('data_type') == 'audio':
+                    # For audio data, use audio features as importance
+                    audio_features = data_profile.get('audio_features', {})
+                    for feature, value in audio_features.items():
+                        if isinstance(value, (int, float)):
+                            importance_scores[feature] = float(value)
+                
+                # Normalize importance scores to [0, 1] range
+                if importance_scores:
+                    max_score = max(importance_scores.values())
+                    min_score = min(importance_scores.values())
+                    score_range = max_score - min_score
+                    
+                    if score_range > 0:
+                        importance_scores = {
+                            k: (v - min_score) / score_range 
+                            for k, v in importance_scores.items()
+                        }
+                
+                return importance_scores
+                
+            except Exception as e:
+                logger.error(f"Feature importance calculation failed: {e}")
+                return {'error': str(e)}
     
     def _create_data_story(self, data_profile: Dict[str, Any], insights: List[DataInsight], 
                           quality_report: DataQualityReport, user_context: str) -> str:
@@ -608,7 +986,7 @@ class DataDetectiveAgent:
     
     def _detect_distribution_type(self, series: pd.Series) -> str:
         """Detect the distribution type of a numeric series"""
-        from scipy import stats
+
         
         # Remove NaN values
         clean_series = series.dropna()

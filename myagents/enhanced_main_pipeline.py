@@ -11,16 +11,31 @@ import joblib
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
+import traceback
 
-# Configure logging
+# Import your agent classes
+try:
+    from data_detective_agent import DataDetectiveAgent
+    from feature_alchemist_agent import FeatureAlchemistAgent
+    from master_strategist_agent import MasterStrategistAgent
+    from model_maestro_agent import ModelMaestroAgent
+    from report_artisan_agent import ReportArtisanAgent
+    AGENTS_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import agents: {e}")
+    print("Running in simplified mode without full agent capabilities")
+    AGENTS_AVAILABLE = False
+
+# Configure logging with UTF-8 encoding for Windows compatibility
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('taskpilot_ai.log'),
+        logging.FileHandler('taskpilot_ai.log', encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -41,6 +56,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve static files (for CSS, JS, images)
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Pydantic models for API
 class AnalysisRequest(BaseModel):
@@ -81,7 +100,36 @@ class TaskPilotAI:
         self.session_dir = os.path.join(output_dir, f"session_{self.session_id}")
         os.makedirs(self.session_dir, exist_ok=True)
         
-        # Initialize mock agents (replace with actual imports when available)
+        # Initialize agents if available
+        self.agents_initialized = False
+        if AGENTS_AVAILABLE and self.gemini_api_key:
+            try:
+                self.data_detective = DataDetectiveAgent(
+                    gemini_api_key=self.gemini_api_key,
+                    output_dir=os.path.join(self.session_dir, "detective")
+                )
+                self.feature_alchemist = FeatureAlchemistAgent(
+                    gemini_api_key=self.gemini_api_key,
+                    output_dir=os.path.join(self.session_dir, "features")
+                )
+                self.master_strategist = MasterStrategistAgent(
+                    gemini_api_key=self.gemini_api_key,
+                    output_dir=os.path.join(self.session_dir, "strategy")
+                )
+                self.model_maestro = ModelMaestroAgent(
+                    gemini_api_key=self.gemini_api_key,
+                    output_dir=os.path.join(self.session_dir, "models")
+                )
+                self.report_artisan = ReportArtisanAgent(
+                    gemini_api_key=self.gemini_api_key,
+                    output_dir=os.path.join(self.session_dir, "reports")
+                )
+                self.agents_initialized = True
+                logger.info("✅ All agents initialized successfully")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize agents: {e}")
+                self.agents_initialized = False
+        
         self.analysis_results = {}
         self.execution_log = []
         
@@ -108,55 +156,151 @@ class TaskPilotAI:
             if df is None or df.empty:
                 raise ValueError("Could not load data or data is empty")
             
-            data_profile = self._create_data_profile(df, data_path)
-            
-            # Phase 2: Task Type Inference
-            if task_type is None:
-                task_type = self._infer_task_type(df, target_column)
-            
-            # Phase 3: Basic Feature Analysis
-            logger.info("Phase 2: Analyzing features...")
-            feature_analysis = self._analyze_features(df, target_column, task_type)
-            
-            # Phase 4: Mock Model Training (simplified for demo)
-            logger.info("Phase 3: Training models...")
-            model_results = self._train_basic_models(df, target_column, task_type)
-            
-            # Phase 5: Generate Reports
-            logger.info("Phase 4: Generating reports...")
-            reports = self._generate_reports(data_profile, feature_analysis, model_results)
-            
-            # Phase 6: Create Production Assets
-            logger.info("Phase 5: Creating production assets...")
-            production_assets = self._create_production_assets(model_results, feature_analysis)
-            
-            # Compile results
-            self.analysis_results = {
-                'data_profile': data_profile,
-                'feature_analysis': feature_analysis,
-                'model_results': model_results,
-                'reports': reports,
-                'production_assets': production_assets
-            }
-            
-            # Save results
-            self._save_session_results()
-            
-            # Generate final summary
-            final_summary = self._create_final_summary()
-            
-            logger.info("✅ TaskPilot AI Analysis Complete!")
-            return {
-                'session_id': self.session_id,
-                'analysis_results': self.analysis_results,
-                'final_summary': final_summary,
-                'session_directory': self.session_dir
-            }
-            
+            # Run full agent pipeline if agents are available
+            if self.agents_initialized:
+                return await self._run_full_agent_pipeline(
+                    data_path, df, user_query, target_column, task_type, 
+                    additional_files, time_budget, business_context
+                )
+            else:
+                # Fallback to simplified analysis
+                return await self._run_simplified_analysis(
+                    data_path, df, user_query, target_column, task_type, 
+                    time_budget, business_context
+                )
+                
         except Exception as e:
             logger.error(f"❌ TaskPilot AI Analysis Failed: {str(e)}")
+            logger.error(traceback.format_exc())
             self._save_error_report(e)
             raise
+    
+    async def _run_full_agent_pipeline(self, data_path: str, df: pd.DataFrame, 
+                                      user_query: str, target_column: str, 
+                                      task_type: str, additional_files: List[str],
+                                      time_budget: int, business_context: str) -> Dict[str, Any]:
+        """Run the full agent pipeline with all sophisticated agents"""
+        
+        logger.info("🧠 Phase 1: Master Strategist - Analyzing data holistically...")
+        
+        # Step 1: Master Strategist analyzes the data and creates strategy
+        data_profile = self.master_strategist.analyze_data_holistically(
+            data_path, user_query, additional_files
+        )
+        
+        strategy = self.master_strategist.design_analysis_strategy(data_profile, user_query)
+        
+        coordination_plan = self.master_strategist.coordinate_agents(strategy)
+        
+        logger.info("🔍 Phase 2: Data Detective - Deep data investigation...")
+        
+        # Step 2: Data Detective performs comprehensive investigation
+        detective_results = self.data_detective.investigate_data(
+            data_path, target_column, additional_files, business_context
+        )
+        
+        logger.info("⚗️ Phase 3: Feature Alchemist - Advanced feature engineering...")
+        
+        # Step 3: Feature Alchemist performs sophisticated feature engineering
+        feature_results = self.feature_alchemist.engineer_features(
+            df, target_column, task_type, business_context
+        )
+        
+        logger.info("🎭 Phase 4: Model Maestro - Advanced modeling...")
+        
+        # Step 4: Model Maestro performs sophisticated modeling
+        # Get the engineered dataset
+        engineered_df = df.copy()  # In real implementation, get from feature_alchemist
+        
+        modeling_results = self.model_maestro.orchestrate_modeling(
+            engineered_df, target_column, task_type, 
+            time_budget=min(time_budget, 300)  # Reserve time for reporting
+        )
+        
+        logger.info("📊 Phase 5: Report Artisan - Creating comprehensive reports...")
+        
+        # Step 5: Report Artisan creates comprehensive reports
+        report_results = self.report_artisan.create_comprehensive_report(
+            detective_results.__dict__ if hasattr(detective_results, '__dict__') else detective_results,
+            feature_results.__dict__ if hasattr(feature_results, '__dict__') else feature_results,
+            modeling_results.__dict__ if hasattr(modeling_results, '__dict__') else modeling_results,
+            user_query, business_context
+        )
+        
+        # Compile comprehensive results
+        self.analysis_results = {
+            'data_profile': data_profile.__dict__ if hasattr(data_profile, '__dict__') else data_profile,
+            'strategy': strategy.__dict__ if hasattr(strategy, '__dict__') else strategy,
+            'detective_results': detective_results.__dict__ if hasattr(detective_results, '__dict__') else detective_results,
+            'feature_results': feature_results.__dict__ if hasattr(feature_results, '__dict__') else feature_results,
+            'modeling_results': modeling_results.__dict__ if hasattr(modeling_results, '__dict__') else modeling_results,
+            'report_results': report_results.__dict__ if hasattr(report_results, '__dict__') else report_results
+        }
+        
+        # Save comprehensive results
+        self._save_session_results()
+        
+        # Generate final summary
+        final_summary = self._create_comprehensive_summary()
+        
+        logger.info("✅ Full Agent Pipeline Complete!")
+        return {
+            'session_id': self.session_id,
+            'analysis_results': self.analysis_results,
+            'final_summary': final_summary,
+            'session_directory': self.session_dir,
+            'agents_used': True
+        }
+    
+    async def _run_simplified_analysis(self, data_path: str, df: pd.DataFrame,
+                                      user_query: str, target_column: str,
+                                      task_type: str, time_budget: int,
+                                      business_context: str) -> Dict[str, Any]:
+        """Fallback simplified analysis when agents are not available"""
+        
+        logger.info("Running simplified analysis (agents not available)...")
+        
+        data_profile = self._create_data_profile(df, data_path)
+        
+        # Task type inference
+        if task_type is None:
+            task_type = self._infer_task_type(df, target_column)
+        
+        # Basic feature analysis
+        feature_analysis = self._analyze_features(df, target_column, task_type)
+        
+        # Basic model training
+        model_results = self._train_basic_models(df, target_column, task_type)
+        
+        # Generate basic reports
+        reports = self._generate_reports(data_profile, feature_analysis, model_results)
+        
+        # Create production assets
+        production_assets = self._create_production_assets(model_results, feature_analysis)
+        
+        # Compile results
+        self.analysis_results = {
+            'data_profile': data_profile,
+            'feature_analysis': feature_analysis,
+            'model_results': model_results,
+            'reports': reports,
+            'production_assets': production_assets
+        }
+        
+        # Save results
+        self._save_session_results()
+        
+        # Generate final summary
+        final_summary = self._create_final_summary()
+        
+        logger.info("✅ Simplified Analysis Complete!")
+        return {
+            'session_id': self.session_id,
+            'analysis_results': self.analysis_results,
+            'final_summary': final_summary,
+            'session_directory': self.session_dir,
+            'agents_used': False
+        }
     
     def _load_data(self, data_path: str) -> pd.DataFrame:
         """Load data from various formats"""
@@ -255,7 +399,7 @@ class TaskPilotAI:
         }
         
         if target_column is None or target_column not in df.columns:
-            results['message'] = "No target column specified - unsupervised learning not implemented in this demo"
+            results['message'] = "No target column specified - unsupervised learning not implemented"
             return results
         
         try:
@@ -282,6 +426,7 @@ class TaskPilotAI:
                 label_encoders[col] = le
             
             # Handle target variable
+            target_encoder = None
             if task_type == "classification" and not pd.api.types.is_numeric_dtype(y):
                 target_encoder = LabelEncoder()
                 y = target_encoder.fit_transform(y.astype(str))
@@ -354,6 +499,19 @@ class TaskPilotAI:
                 model_path = os.path.join(self.session_dir, "best_model.joblib")
                 joblib.dump(results['best_model']['model_object'], model_path)
                 results['best_model']['model_path'] = model_path
+                
+                # Save preprocessing objects
+                preprocessing_path = os.path.join(self.session_dir, "preprocessing.joblib")
+                preprocessing = {
+                    'label_encoders': label_encoders,
+                    'target_encoder': target_encoder,
+                    'scaler': scaler,
+                    'feature_columns': feature_columns,
+                    'numeric_columns': list(numeric_columns),
+                    'categorical_columns': list(categorical_columns)
+                }
+                joblib.dump(preprocessing, preprocessing_path)
+                results['preprocessing_path'] = preprocessing_path
         
         except Exception as e:
             logger.error(f"Model training failed: {e}")
@@ -451,7 +609,7 @@ class TaskPilotAI:
             'business_recommendations': self._generate_business_recommendations(model_results),
             'next_steps': [
                 "Review model performance and validate results",
-                "Deploy model to production environment",
+                "Deploy model to production environment", 
                 "Set up monitoring and retraining pipeline",
                 "Collect feedback and iterate on model"
             ]
@@ -578,36 +736,52 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ProductionModel:
-    def __init__(self, model_path: str = "best_model.joblib"):
+    def __init__(self, model_path: str = "best_model.joblib", preprocessing_path: str = "preprocessing.joblib"):
         self.model = joblib.load(model_path)
-        self.scaler = StandardScaler()
-        self.label_encoders = {{}}
+        self.preprocessing = joblib.load(preprocessing_path)
+        self.label_encoders = self.preprocessing.get('label_encoders', {{}})
+        self.target_encoder = self.preprocessing.get('target_encoder', None)
+        self.scaler = self.preprocessing.get('scaler', None)
+        self.feature_columns = self.preprocessing.get('feature_columns', [])
+        self.numeric_columns = self.preprocessing.get('numeric_columns', [])
+        self.categorical_columns = self.preprocessing.get('categorical_columns', [])
         logger.info("Production model loaded successfully")
     
     def preprocess(self, data: Union[pd.DataFrame, Dict]) -> pd.DataFrame:
         if isinstance(data, dict):
             data = pd.DataFrame([data])
         
+        # Ensure we have the right columns
+        processed_data = data.copy()
+        
         # Handle missing values
-        numeric_columns = data.select_dtypes(include=[np.number]).columns
-        categorical_columns = data.select_dtypes(include=['object']).columns
+        for col in self.numeric_columns:
+            if col in processed_data.columns:
+                processed_data[col] = processed_data[col].fillna(processed_data[col].median())
         
-        for col in numeric_columns:
-            data[col] = data[col].fillna(data[col].median())
+        for col in self.categorical_columns:
+            if col in processed_data.columns:
+                processed_data[col] = processed_data[col].fillna('unknown')
+                if col in self.label_encoders:
+                    # Handle unseen categories
+                    le = self.label_encoders[col]
+                    processed_data[col] = processed_data[col].apply(
+                        lambda x: le.transform([str(x)])[0] if str(x) in le.classes_ else -1
+                    )
         
-        for col in categorical_columns:
-            data[col] = data[col].fillna('unknown')
-            if col not in self.label_encoders:
-                self.label_encoders[col] = LabelEncoder()
-                data[col] = self.label_encoders[col].fit_transform(data[col].astype(str))
-            else:
-                data[col] = self.label_encoders[col].transform(data[col].astype(str))
+        # Select only the features used in training
+        processed_data = processed_data[self.feature_columns]
         
-        return data
+        return processed_data
     
     def predict(self, data: Union[pd.DataFrame, Dict]) -> np.ndarray:
         processed_data = self.preprocess(data)
         predictions = self.model.predict(processed_data)
+        
+        # Decode predictions if target was encoded
+        if self.target_encoder is not None:
+            predictions = self.target_encoder.inverse_transform(predictions)
+        
         return predictions
     
     def predict_proba(self, data: Union[pd.DataFrame, Dict]) -> np.ndarray:
@@ -654,7 +828,7 @@ class PredictionRequest(BaseModel):
     data: Union[Dict[str, Any], List[Dict[str, Any]]]
 
 class PredictionResponse(BaseModel):
-    predictions: List[float]
+    predictions: List[Union[float, str]]
     status: str
 
 @app.get("/health")
@@ -669,7 +843,21 @@ def predict(request: PredictionRequest):
     try:
         predictions = model.predict(request.data)
         return PredictionResponse(
-            predictions=predictions.tolist(),
+            predictions=predictions.tolist() if hasattr(predictions, 'tolist') else list(predictions),
+            status="success"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/predict_proba", response_model=PredictionResponse)
+def predict_proba(request: PredictionRequest):
+    if model is None:
+        raise HTTPException(status_code=503, detail="Model not available")
+    
+    try:
+        probabilities = model.predict_proba(request.data)
+        return PredictionResponse(
+            predictions=probabilities.tolist(),
             status="success"
         )
     except Exception as e:
@@ -677,7 +865,7 @@ def predict(request: PredictionRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)
 '''
         return api_code
     
@@ -692,6 +880,11 @@ scikit-learn==1.3.2
 joblib==1.3.2
 pydantic==2.4.2
 python-multipart==0.0.6
+google-generativeai==0.3.2
+langchain-google-genai==1.0.0
+plotly==5.17.0
+matplotlib==3.8.0
+seaborn==0.13.0
 """
     
     def _save_session_results(self):
@@ -713,6 +906,7 @@ python-multipart==0.0.6
                 'error_time': datetime.now().isoformat(),
                 'error_type': type(error).__name__,
                 'error_message': str(error),
+                'traceback': traceback.format_exc(),
                 'execution_log': self.execution_log
             }
             with open(error_path, 'w') as f:
@@ -722,7 +916,7 @@ python-multipart==0.0.6
             logger.error(f"Failed to save error report: {e}")
     
     def _create_final_summary(self) -> Dict[str, Any]:
-        """Create final analysis summary"""
+        """Create final analysis summary for simplified mode"""
         return {
             'session_id': self.session_id,
             'completed_at': datetime.now().isoformat(),
@@ -734,21 +928,84 @@ python-multipart==0.0.6
                 'Model training results',
                 'Production-ready code',
                 'API server code'
-            ]
+            ],
+            'agents_used': self.agents_initialized
+        }
+    
+    def _create_comprehensive_summary(self) -> Dict[str, Any]:
+        """Create comprehensive final summary for full agent mode"""
+        return {
+            'session_id': self.session_id,
+            'completed_at': datetime.now().isoformat(),
+            'session_directory': self.session_dir,
+            'status': 'completed',
+            'key_outputs': [
+                'Comprehensive data investigation',
+                'Advanced feature engineering',
+                'Sophisticated model development',
+                'Business insights and recommendations',
+                'Interactive reports and visualizations',
+                'Production deployment assets'
+            ],
+            'agents_deployed': [
+                'Master Strategist Agent',
+                'Data Detective Agent', 
+                'Feature Alchemist Agent',
+                'Model Maestro Agent',
+                'Report Artisan Agent'
+            ],
+            'agents_used': True
         }
 
 # Global TaskPilot instance
 taskpilot = None
 
+# Serve the HTML interface
+@app.get("/", response_class=HTMLResponse)
+def read_root():
+    """Serve the main HTML interface"""
+    try:
+        # Try to read the HTML file
+        html_path = "index.html"
+        if os.path.exists(html_path):
+            with open(html_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        else:
+            # Return a basic HTML page if file not found
+            return """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>TaskPilot AI</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
+                    .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }
+                    h1 { color: #2a2a72; text-align: center; }
+                    .info { background: #e3f2fd; padding: 20px; border-radius: 5px; margin: 20px 0; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>🚀 TaskPilot AI</h1>
+                    <div class="info">
+                        <h3>API Server Running</h3>
+                        <p>TaskPilot AI API server is running successfully!</p>
+                        <p><strong>API Documentation:</strong> <a href="/docs">/docs</a></p>
+                        <p><strong>Upload endpoint:</strong> <code>POST /upload-and-analyze</code></p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+    except Exception as e:
+        return f"<h1>TaskPilot AI</h1><p>Error loading interface: {e}</p><p><a href='/docs'>API Documentation</a></p>"
+
 # API Endpoints
 @app.on_event("startup")
 async def startup_event():
     global taskpilot
-    logger.info("Starting TaskPilot AI API...")
-
-@app.get("/")
-def read_root():
-    return {"message": "TaskPilot AI - The True AI Data Scientist", "version": "1.0.0", "status": "running"}
+    logger.info("🚀 Starting TaskPilot AI API Server...")
+    logger.info(f"📊 Agent Status: {'Available' if AGENTS_AVAILABLE else 'Simplified Mode'}")
 
 @app.post("/upload-and-analyze", response_model=AnalysisResponse)
 async def upload_and_analyze(
@@ -768,23 +1025,34 @@ async def upload_and_analyze(
         api_key = gemini_api_key or os.getenv("GEMINI_API_KEY")
         taskpilot = TaskPilotAI(gemini_api_key=api_key)
         
-        # Save uploaded file
+        # Create uploads directory
         upload_dir = os.path.join("uploads", taskpilot.session_id)
         os.makedirs(upload_dir, exist_ok=True)
         
+        # Save uploaded file
         file_path = os.path.join(upload_dir, file.filename)
         with open(file_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
         
-        logger.info(f"File uploaded: {file_path}")
+        logger.info(f"📁 File uploaded: {file_path} ({len(content)} bytes)")
+        
+        # Validate file
+        if len(content) == 0:
+            raise ValueError("Uploaded file is empty")
+        
+        # Clean up form inputs
+        target_col = target_column.strip() if target_column and target_column.strip() else None
+        task_t = task_type.strip() if task_type and task_type.strip() else None
+        
+        logger.info(f"🎯 Analysis parameters: target='{target_col}', task_type='{task_t}', time_budget={time_budget}")
         
         # Run analysis
         results = await taskpilot.analyze_data(
             data_path=file_path,
             user_query=user_query,
-            target_column=target_column,
-            task_type=task_type,
+            target_column=target_col,
+            task_type=task_t,
             time_budget=time_budget,
             business_context=business_context
         )
@@ -792,17 +1060,20 @@ async def upload_and_analyze(
         return AnalysisResponse(
             session_id=results['session_id'],
             status="completed",
-            message="Analysis completed successfully",
+            message=f"Analysis completed successfully using {'full agent pipeline' if results.get('agents_used') else 'simplified mode'}",
             session_directory=results['session_directory'],
             results_summary=results['final_summary']
         )
         
     except Exception as e:
-        logger.error(f"Analysis failed: {e}")
+        error_msg = f"Analysis failed: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        
         return AnalysisResponse(
             session_id=taskpilot.session_id if taskpilot else "unknown",
             status="failed",
-            message=f"Analysis failed: {str(e)}",
+            message=error_msg,
             session_directory="",
             results_summary=None
         )
@@ -932,14 +1203,16 @@ async def list_sessions():
                             "session_id": session_id,
                             "created_at": session_id,  # Timestamp is in session_id
                             "status": "completed",
-                            "has_results": True
+                            "has_results": True,
+                            "agents_used": results.get('agents_used', False)
                         })
                     except:
                         sessions.append({
                             "session_id": session_id,
                             "created_at": session_id,
                             "status": "unknown",
-                            "has_results": False
+                            "has_results": False,
+                            "agents_used": False
                         })
         
         return {"sessions": sessions}
@@ -965,6 +1238,16 @@ async def delete_session(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/status")
+async def get_status():
+    """Get system status"""
+    return {
+        "status": "running",
+        "agents_available": AGENTS_AVAILABLE,
+        "gemini_api_configured": bool(os.getenv("GEMINI_API_KEY")),
+        "version": "1.0.0"
+    }
 
 # Convenience functions for different use cases
 def analyze_csv_file(csv_path: str, target_column: str = None, 
@@ -1023,6 +1306,7 @@ if __name__ == "__main__":
         print("🚀 Starting TaskPilot AI API Server...")
         print(f"🌐 Server will be available at: http://{args.host}:{args.port}")
         print("📚 API Documentation: http://localhost:8000/docs")
+        print(f"🤖 Agent Status: {'Full Agent Army Available' if AGENTS_AVAILABLE else 'Simplified Mode'}")
         
         uvicorn.run(
             "enhanced_main_pipeline:app",
@@ -1060,6 +1344,7 @@ if __name__ == "__main__":
             print("\n✅ Analysis Complete!")
             print(f"📁 Session ID: {results['session_id']}")
             print(f"📊 Results Directory: {results['session_directory']}")
+            print(f"🤖 Agents Used: {'Yes' if results.get('agents_used') else 'Simplified Mode'}")
             
             # Print summary
             summary = results['final_summary']
@@ -1069,3 +1354,1086 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"❌ Analysis failed: {e}")
             sys.exit(1)
+
+# Serve the HTML interface at the root
+@app.get("/", response_class=HTMLResponse)
+def read_root():
+    """Serve the main TaskPilot AI interface"""
+    try:
+        # Define the HTML content inline (you can also read from file)
+        html_content = '''<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TaskPilot AI - The True AI Data Scientist</title>
+    <style>
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        margin: 0;
+        padding: 0;
+        min-height: 100vh;
+      }
+      .container {
+        max-width: 1000px;
+        margin: 20px auto;
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 16px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        padding: 40px;
+        backdrop-filter: blur(10px);
+      }
+      .header {
+        text-align: center;
+        margin-bottom: 40px;
+      }
+      h1 {
+        color: #2a2a72;
+        font-size: 2.5em;
+        margin: 0;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+      }
+      .subtitle {
+        color: #666;
+        font-size: 1.2em;
+        margin-top: 10px;
+      }
+      .system-status {
+        background: linear-gradient(45deg, #d4edda, #c3e6cb);
+        color: #155724;
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 20px;
+        border-left: 5px solid #28a745;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .status-indicator {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #28a745;
+        animation: pulse 2s infinite;
+      }
+      @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+      }
+      .warning-banner {
+        background: linear-gradient(45deg, #fff3cd, #ffeaa7);
+        color: #856404;
+        padding: 20px;
+        border-radius: 10px;
+        margin-bottom: 30px;
+        border-left: 5px solid #f39c12;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      }
+      .form-section {
+        background: white;
+        padding: 30px;
+        border-radius: 12px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        margin-bottom: 30px;
+      }
+      .form-group {
+        margin-bottom: 25px;
+      }
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+        color: #2a2a72;
+      }
+      input[type="file"],
+      textarea,
+      input[type="text"],
+      input[type="password"],
+      select {
+        width: 100%;
+        padding: 12px;
+        border-radius: 8px;
+        border: 2px solid #e1e5e9;
+        font-size: 16px;
+        transition: border-color 0.3s ease;
+        box-sizing: border-box;
+      }
+      input:focus,
+      textarea:focus,
+      select:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+      }
+      .file-info {
+        margin-top: 10px;
+        padding: 10px;
+        background: #f8f9fa;
+        border-radius: 5px;
+        font-size: 14px;
+        display: none;
+      }
+      .submit-btn {
+        background: linear-gradient(45deg, #667eea, #764ba2);
+        color: white;
+        border: none;
+        padding: 15px 30px;
+        border-radius: 8px;
+        font-size: 18px;
+        font-weight: 600;
+        cursor: pointer;
+        width: 100%;
+        transition: all 0.3s ease;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .submit-btn:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+      }
+      .submit-btn:disabled {
+        background: #cccccc;
+        cursor: not-allowed;
+        transform: none;
+      }
+      .status {
+        padding: 15px;
+        border-radius: 8px;
+        margin: 20px 0;
+        font-weight: 500;
+        display: none;
+      }
+      .status.info {
+        background: #d1ecf1;
+        color: #0c5460;
+        border-left: 4px solid #17a2b8;
+      }
+      .status.success {
+        background: #d4edda;
+        color: #155724;
+        border-left: 4px solid #28a745;
+      }
+      .status.error {
+        background: #f8d7da;
+        color: #721c24;
+        border-left: 4px solid #dc3545;
+      }
+      .loading-spinner {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #667eea;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-right: 10px;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      .results-container {
+        background: white;
+        border-radius: 12px;
+        padding: 30px;
+        margin-top: 30px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+      }
+      .session-info {
+        background: linear-gradient(45deg, #f8f9fa, #e9ecef);
+        padding: 20px;
+        border-radius: 10px;
+        margin-bottom: 25px;
+        border-left: 5px solid #28a745;
+      }
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 20px;
+        margin: 25px 0;
+      }
+      .summary-card {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+        text-align: center;
+        border-top: 4px solid #667eea;
+      }
+      .card-value {
+        font-size: 1.8em;
+        font-weight: bold;
+        color: #2a2a72;
+        margin-bottom: 5px;
+      }
+      .card-label {
+        color: #666;
+        font-size: 0.9em;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .achievements-list {
+        background: #f8f9fa;
+        padding: 20px;
+        border-radius: 10px;
+        margin: 20px 0;
+      }
+      .achievement-item {
+        display: flex;
+        align-items: center;
+        margin: 10px 0;
+        padding: 10px;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+      }
+      .download-section {
+        background: #e8f5e8;
+        padding: 20px;
+        border-radius: 10px;
+        margin-top: 25px;
+      }
+      .download-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin-top: 15px;
+      }
+      .download-btn {
+        background: #28a745;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 6px;
+        text-decoration: none;
+        text-align: center;
+        transition: background 0.3s ease;
+        font-weight: 500;
+        display: block;
+      }
+      .download-btn:hover {
+        background: #218838;
+        transform: translateY(-1px);
+        text-decoration: none;
+        color: white;
+      }
+      .tabs {
+        display: flex;
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 5px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+      }
+      .tab {
+        flex: 1;
+        min-width: 120px;
+        text-align: center;
+        padding: 12px;
+        background: transparent;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 500;
+        transition: all 0.3s ease;
+      }
+      .tab.active {
+        background: white;
+        color: #667eea;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      }
+      .tab-content {
+        display: none;
+      }
+      .tab-content.active {
+        display: block;
+      }
+      .json-viewer {
+        background: #f8f9fa;
+        padding: 20px;
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
+        max-height: 400px;
+        overflow-y: auto;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .production-assets {
+        background: #fff3cd;
+        padding: 20px;
+        border-radius: 10px;
+        margin: 20px 0;
+        border-left: 5px solid #ffc107;
+      }
+      .progress-container {
+        width: 100%;
+        background-color: #e0e0e0;
+        border-radius: 10px;
+        margin: 10px 0;
+        overflow: hidden;
+      }
+      .progress-bar {
+        height: 20px;
+        background: linear-gradient(90deg, #667eea, #764ba2);
+        border-radius: 10px;
+        text-align: center;
+        line-height: 20px;
+        color: white;
+        font-size: 12px;
+        font-weight: bold;
+        transition: width 0.3s ease;
+        width: 0%;
+      }
+      .agent-status {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 10px;
+        margin: 20px 0;
+      }
+      .agent-card {
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 4px solid #667eea;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+      }
+      .agent-name {
+        font-weight: bold;
+        color: #2a2a72;
+        margin-bottom: 5px;
+      }
+      .agent-description {
+        font-size: 13px;
+        color: #666;
+      }
+      .error-details {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        margin-top: 10px;
+        border-left: 4px solid #dc3545;
+        font-family: monospace;
+        font-size: 13px;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+      .connection-info {
+        background: #e3f2fd;
+        padding: 15px;
+        border-radius: 8px;
+        margin: 15px 0;
+        border-left: 4px solid #2196f3;
+      }
+      @media (max-width: 768px) {
+        .container {
+          margin: 10px;
+          padding: 20px;
+        }
+        .tabs {
+          flex-direction: column;
+        }
+        .tab {
+          flex: none;
+          margin-bottom: 5px;
+        }
+        .summary-grid {
+          grid-template-columns: 1fr;
+        }
+        .download-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🚀 TaskPilot AI</h1>
+        <div class="subtitle">The True AI Data Scientist</div>
+      </div>
+
+      <div id="systemStatus" class="system-status">
+        <div class="status-indicator">
+          <div class="status-dot"></div>
+          <span id="statusText">System Online</span>
+        </div>
+        <div id="agentStatus">Full Agent Army Ready</div>
+      </div>
+
+      <div class="warning-banner">
+        <h4>🤖 Agent Army Capabilities</h4>
+        <div id="capabilityInfo">
+          <p><strong>✅ Always Available:</strong></p>
+          <ul style="margin: 10px 0; padding-left: 25px;">
+            <li>Tabular Data Analysis (CSV, Excel, JSON)</li>
+            <li>Classification & Regression Tasks</li>
+            <li>Automated Feature Engineering</li>
+            <li>Production-Ready Model Deployment</li>
+            <li>Comprehensive Reports & Visualizations</li>
+          </ul>
+          <p><strong>🎯 Enhanced with Gemini API:</strong></p>
+          <ul style="margin: 10px 0; padding-left: 25px;">
+            <li>Advanced AI-Powered Insights</li>
+            <li>Business Context Understanding</li>
+            <li>Strategic Analysis Planning</li>
+            <li>Intelligent Feature Recommendations</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3>📤 Upload & Analyze Your Data</h3>
+        
+        <form id="analysisForm" enctype="multipart/form-data">
+          <div class="form-group">
+            <label for="file">📁 Select Data File:</label>
+            <input type="file" id="file" name="file" accept=".csv,.xlsx,.xls,.json" required />
+            <div id="fileInfo" class="file-info"></div>
+            <small style="color: #666; margin-top: 5px; display: block;">
+              Supported formats: CSV, Excel (.xlsx, .xls), JSON. Max size: 100MB
+            </small>
+          </div>
+
+          <div class="form-group">
+            <label for="user_query">💬 Analysis Goal:</label>
+            <textarea
+              id="user_query"
+              name="user_query"
+              rows="3"
+              placeholder="Describe what you want to achieve. e.g., 'Predict customer churn based on usage patterns' or 'Analyze factors affecting house prices'"
+              required
+            ></textarea>
+            
+            <!-- Quick Examples -->
+            <div style="margin: 15px 0; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+              <h5 style="margin: 0 0 10px 0; color: #2a2a72;">💡 Quick Examples:</h5>
+              <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button type="button" onclick="loadExample('customer_churn')" style="padding: 5px 10px; background: #e3f2fd; border: 1px solid #2196f3; border-radius: 4px; cursor: pointer; font-size: 12px;">Customer Churn</button>
+                <button type="button" onclick="loadExample('house_prices')" style="padding: 5px 10px; background: #e8f5e9; border: 1px solid #4caf50; border-radius: 4px; cursor: pointer; font-size: 12px;">House Prices</button>
+                <button type="button" onclick="loadExample('sales_forecast')" style="padding: 5px 10px; background: #fff3e0; border: 1px solid #ff9800; border-radius: 4px; cursor: pointer; font-size: 12px;">Sales Forecast</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="target_column" title="This should be the exact column name from your dataset that contains the values you want to predict or analyze." style="cursor: help;">🎯 Target Column (for supervised learning) ❓</label>
+            <input
+              type="text"
+              id="target_column"
+              name="target_column"
+              placeholder="e.g., 'churn', 'price', 'outcome' (leave empty for unsupervised analysis)"
+            />
+            <small style="color: #666; margin-top: 5px; display: block;">
+              The column you want to predict or analyze as the outcome variable
+            </small>
+          </div>
+
+          <div class="form-group">
+            <label for="task_type" title="Classification predicts categories (yes/no, spam/not spam), while Regression predicts numbers (price, temperature)." style="cursor: help;">🤖 Task Type ❓</label>
+            <select id="task_type" name="task_type">
+              <option value="">Auto-detect from data</option>
+              <option value="classification">Classification (predict categories)</option>
+              <option value="regression">Regression (predict numbers)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="business_context" title="Providing context helps our AI understand your domain and generate more relevant insights and recommendations." style="cursor: help;">🏢 Business Context (optional but recommended) ❓</label>
+            <textarea
+              id="business_context"
+              name="business_context"
+              rows="2"
+              placeholder="Provide business context for better insights. e.g., 'E-commerce company looking to reduce customer churn and increase retention'"
+            ></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="time_budget" title="Longer analysis times allow for more sophisticated feature engineering and model optimization." style="cursor: help;">⏱️ Analysis Depth ❓</label>
+            <select id="time_budget" name="time_budget">
+              <option value="300">Quick Analysis (5 minutes)</option>
+              <option value="600" selected>Standard Analysis (10 minutes)</option>
+              <option value="1200">Deep Analysis (20 minutes)</option>
+              <option value="1800">Comprehensive Analysis (30 minutes)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="gemini_api_key">🔑 Gemini API Key (optional - enhances AI capabilities):</label>
+            <input
+              type="password"
+              id="gemini_api_key"
+              name="gemini_api_key"
+              placeholder="Your Google Gemini API key for enhanced AI features"
+            />
+            <small style="color: #666; margin-top: 5px; display: block;">
+              Get your free API key at: <a href="https://makersuite.google.com/app/apikey" target="_blank">Google AI Studio</a>
+            </small>
+          </div>
+
+          <button type="submit" class="submit-btn" id="submitBtn">
+            🚀 Launch Analysis
+          </button>
+        </form>
+      </div>
+
+      <div id="progress" class="progress-container" style="display: none;">
+        <div id="progressBar" class="progress-bar">0%</div>
+      </div>
+
+      <div id="status" class="status"></div>
+      
+      <div id="agentProgress" class="agent-status" style="display: none;">
+        <div class="agent-card">
+          <div class="agent-name">🧠 Master Strategist</div>
+          <div class="agent-description">Analyzing data and planning strategy...</div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-name">🔍 Data Detective</div>
+          <div class="agent-description">Investigating data quality and patterns...</div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-name">⚗️ Feature Alchemist</div>
+          <div class="agent-description">Engineering optimal features...</div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-name">🎭 Model Maestro</div>
+          <div class="agent-description">Training and optimizing models...</div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-name">📊 Report Artisan</div>
+          <div class="agent-description">Creating comprehensive reports...</div>
+        </div>
+      </div>
+
+      <div id="results" class="results-container" style="display: none;"></div>
+    </div>
+
+    <script>
+      let currentSessionId = null;
+      let analysisInProgress = false;
+
+      // Since we're served from the same origin, we can use relative URLs
+      const API_BASE_URL = '';
+
+      // Check system status on load
+      window.addEventListener('load', function() {
+        console.log('🚀 TaskPilot AI Frontend Initialized');
+        checkSystemStatus();
+        setupFileValidation();
+        loadFormData();
+      });
+
+      async function checkSystemStatus() {
+        try {
+          const response = await fetch('/status');
+          const status = await response.json();
+          
+          const statusText = document.getElementById('statusText');
+          const agentStatus = document.getElementById('agentStatus');
+          
+          if (status.status === 'running') {
+            statusText.textContent = 'System Online';
+            
+            if (status.agents_available && status.gemini_api_configured) {
+              agentStatus.textContent = '🤖 Full Agent Army Available';
+            } else if (status.agents_available) {
+              agentStatus.textContent = '🤖 Agents Ready (Add Gemini API for Enhanced Features)';
+            } else {
+              agentStatus.textContent = '⚡ Fast Mode (Core Features Available)';
+            }
+          }
+        } catch (error) {
+          console.log('Status check failed:', error);
+          document.getElementById('statusText').textContent = 'System Issues Detected';
+          document.getElementById('agentStatus').textContent = 'Limited Functionality';
+        }
+      }
+
+      function setupFileValidation() {
+        const fileInput = document.getElementById('file');
+        const fileInfo = document.getElementById('fileInfo');
+        
+        fileInput.addEventListener('change', function(e) {
+          const file = e.target.files[0];
+          if (file) {
+            const sizeInMB = (file.size / (1024 * 1024)).toFixed(2);
+            const fileType = file.name.split('.').pop().toLowerCase();
+            
+            fileInfo.innerHTML = `
+              <strong>Selected:</strong> ${file.name}<br>
+              <strong>Size:</strong> ${sizeInMB} MB<br>
+              <strong>Type:</strong> ${fileType.toUpperCase()}
+            `;
+            fileInfo.style.display = 'block';
+            
+            // Validate file
+            if (!['csv', 'xlsx', 'xls', 'json'].includes(fileType)) {
+              showStatus('error', '❌ Unsupported file type. Please upload CSV, Excel, or JSON files.');
+              return;
+            }
+            
+            if (file.size > 100 * 1024 * 1024) { // 100MB limit
+              showStatus('error', '❌ File too large. Please upload files smaller than 100MB.');
+              return;
+            }
+            
+            showStatus('success', '✅ File looks good!');
+          }
+        });
+      }
+
+      // Form submission handler
+      document.getElementById('analysisForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        if (!analysisInProgress) {
+          runAnalysis();
+        }
+      });
+
+      async function runAnalysis() {
+        const statusDiv = document.getElementById('status');
+        const resultsDiv = document.getElementById('results');
+        const submitBtn = document.getElementById('submitBtn');
+        const progressContainer = document.getElementById('progress');
+        const progressBar = document.getElementById('progressBar');
+        const agentProgress = document.getElementById('agentProgress');
+        
+        analysisInProgress = true;
+        
+        try {
+          // Validate form
+          const fileInput = document.getElementById('file');
+          const file = fileInput.files[0];
+          
+          if (!file) {
+            throw new Error('Please select a file');
+          }
+          
+          const userQuery = document.getElementById('user_query').value.trim();
+          if (!userQuery) {
+            throw new Error('Please describe your analysis goal');
+          }
+
+          // Show initial loading state
+          showStatus('info', '<div class="loading-spinner"></div>Preparing analysis pipeline...', true);
+          submitBtn.disabled = true;
+          submitBtn.innerHTML = '<div class="loading-spinner"></div>Analyzing...';
+          resultsDiv.style.display = 'none';
+          
+          // Show progress bar
+          progressContainer.style.display = 'block';
+          agentProgress.style.display = 'grid';
+          
+          // Animate progress
+          const progressInterval = animateProgress();
+
+          // Prepare form data
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('user_query', userQuery);
+          formData.append('target_column', document.getElementById('target_column').value || '');
+          formData.append('task_type', document.getElementById('task_type').value || '');
+          formData.append('business_context', document.getElementById('business_context').value || '');
+          formData.append('time_budget', document.getElementById('time_budget').value);
+          formData.append('gemini_api_key', document.getElementById('gemini_api_key').value || '');
+
+          console.log('Sending analysis request...');
+
+          // Make API call to upload and analyze
+          const response = await fetch('/upload-and-analyze', {
+            method: 'POST',
+            body: formData
+          });
+
+          console.log('Response received:', response.status, response.statusText);
+
+          if (!response.ok) {
+            let errorMessage;
+            try {
+              const errorData = await response.json();
+              errorMessage = errorData.message || errorData.detail || 'Analysis failed';
+              console.log('Error details:', errorData);
+            } catch {
+              errorMessage = `Server error: ${response.status} ${response.statusText}`;
+            }
+            throw new Error(errorMessage);
+          }
+
+          const result = await response.json();
+          console.log('Analysis result:', result);
+
+          // Clear progress animation
+          clearInterval(progressInterval);
+
+          if (result.status === 'completed') {
+            currentSessionId = result.session_id;
+            showStatus('success', '✅ Analysis completed successfully!');
+            await displayResults(result);
+          } else {
+            throw new Error(result.message || 'Analysis failed');
+          }
+
+        } catch (error) {
+          console.error('Analysis error:', error);
+          showStatus('error', `❌ ${error.message}`, true);
+        } finally {
+          analysisInProgress = false;
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = '🚀 Launch Analysis';
+          progressContainer.style.display = 'none';
+          agentProgress.style.display = 'none';
+        }
+      }
+
+      function animateProgress() {
+        const progressBar = document.getElementById('progressBar');
+        let progress = 0;
+        const interval = setInterval(() => {
+          progress += Math.random() * 8 + 2;
+          if (progress >= 95) {
+            progress = 95;
+            clearInterval(interval);
+          }
+          progressBar.style.width = `${progress}%`;
+          progressBar.textContent = `${Math.round(progress)}%`;
+        }, 800);
+        
+        return interval;
+      }
+
+      async function displayResults(result) {
+        const resultsDiv = document.getElementById('results');
+        const progressBar = document.getElementById('progressBar');
+        
+        // Complete progress bar
+        progressBar.style.width = '100%';
+        progressBar.textContent = '100%';
+        
+        try {
+          // Fetch detailed results
+          let detailedResults = null;
+          if (currentSessionId) {
+            try {
+              const detailResponse = await fetch(`/sessions/${currentSessionId}/results`);
+              if (detailResponse.ok) {
+                detailedResults = await detailResponse.json();
+                console.log('Detailed results:', detailedResults);
+              }
+            } catch (e) {
+              console.log('Could not fetch detailed results:', e);
+            }
+          }
+
+          let html = `
+            <h2>📊 Analysis Results</h2>
+            
+            <div class="session-info">
+              <h4>📁 Session Information</h4>
+              <p><strong>Session ID:</strong> ${result.session_id}</p>
+              <p><strong>Status:</strong> <span style="color: #28a745; font-weight: bold;">${result.status}</span></p>
+              <p><strong>Analysis Mode:</strong> ${result.results_summary?.agents_used ? 'Full Agent Army 🤖' : 'Fast Mode ⚡'}</p>
+              <p><strong>Completed:</strong> ${new Date().toLocaleString()}</p>
+            </div>
+          `;
+
+          // Results summary
+          if (result.results_summary) {
+            const summary = result.results_summary;
+            
+            html += `
+              <div class="tabs">
+                <button class="tab active" onclick="switchTab('summary')">📈 Summary</button>
+                <button class="tab" onclick="switchTab('details')">🔍 Details</button>
+                <button class="tab" onclick="switchTab('downloads')">📥 Downloads</button>
+                <button class="tab" onclick="switchTab('production')">🚀 Production</button>
+              </div>
+
+              <div id="summary-tab" class="tab-content active">
+                <h4>🎯 Key Achievements</h4>
+                <div class="achievements-list">
+            `;
+
+            if (summary.key_outputs) {
+              summary.key_outputs.forEach(output => {
+                html += `<div class="achievement-item">✅ ${output}</div>`;
+              });
+            }
+
+            html += `
+                </div>
+                
+                <h4>📊 Analysis Overview</h4>
+                <div class="summary-grid">
+                  <div class="summary-card">
+                    <div class="card-value">${summary.agents_used ? 'Full' : 'Fast'}</div>
+                    <div class="card-label">Analysis Mode</div>
+                  </div>
+                  <div class="summary-card">
+                    <div class="card-value">${summary.status}</div>
+                    <div class="card-label">Status</div>
+                  </div>
+                  <div class="summary-card">
+                    <div class="card-value">${new Date(summary.completed_at).toLocaleTimeString()}</div>
+                    <div class="card-label">Completed At</div>
+                  </div>
+                </div>
+            `;
+
+            // Show agent details if full mode was used
+            if (summary.agents_used && summary.agents_deployed) {
+              html += `
+                <h4>🤖 Agents Deployed</h4>
+                <div class="achievements-list">
+              `;
+              summary.agents_deployed.forEach(agent => {
+                html += `<div class="achievement-item">🤖 ${agent}</div>`;
+              });
+              html += `</div>`;
+            }
+
+            html += `</div>`;
+          }
+
+          // Detailed results tab
+          html += `
+            <div id="details-tab" class="tab-content">
+              <h4>🔍 Detailed Analysis Results</h4>
+              <div class="json-viewer">
+                <pre>${JSON.stringify(detailedResults || result, null, 2)}</pre>
+              </div>
+            </div>
+          `;
+
+          // Downloads tab
+          html += `
+            <div id="downloads-tab" class="tab-content">
+              <div class="download-section">
+                <h4>📥 Download Analysis Outputs</h4>
+                <p>Download the generated reports and assets from your analysis session.</p>
+                <div class="download-grid">
+          `;
+          
+          // Add download links
+          const downloadFiles = [
+            { name: 'session_results.json', label: '📄 Session Results' },
+            { name: 'data_summary.json', label: '📊 Data Summary' },
+            { name: 'model_report.json', label: '🤖 Model Report' },
+            { name: 'executive_summary.json', label: '👔 Executive Summary' },
+            { name: 'best_model.joblib', label: '💾 Trained Model' },
+            { name: 'production_model.py', label: '🐍 Production Code' },
+            { name: 'model_api.py', label: '🌐 API Server' },
+            { name: 'requirements.txt', label: '📦 Requirements' }
+          ];
+
+          downloadFiles.forEach(file => {
+            html += `
+              <a href="/sessions/${result.session_id}/download/${file.name}" 
+                 class="download-btn" 
+                 target="_blank">
+                ${file.label}
+              </a>
+            `;
+          });
+
+          html += `
+                </div>
+              </div>
+            </div>
+          `;
+
+          // Production tab
+          html += `
+            <div id="production-tab" class="tab-content">
+              <div class="production-assets">
+                <h4>🚀 Production Deployment Guide</h4>
+                <p>Your AI model is ready for production! Here's everything you need:</p>
+                
+                <div class="achievements-list">
+                  <div class="achievement-item">
+                    <strong>📦 Production Model:</strong> Trained and serialized model ready for deployment
+                  </div>
+                  <div class="achievement-item">
+                    <strong>🐍 Python Code:</strong> Production-ready classes with preprocessing pipeline
+                  </div>
+                  <div class="achievement-item">
+                    <strong>🌐 API Server:</strong> FastAPI server code for REST API deployment
+                  </div>
+                  <div class="achievement-item">
+                    <strong>📋 Requirements:</strong> All Python dependencies listed for easy setup
+                  </div>
+                </div>
+
+                <h5>🛠️ Quick Deployment Steps:</h5>
+                <div class="json-viewer">
+                  <pre># 1. Download all production files (use Downloads tab above)
+# 2. Install dependencies: pip install -r requirements.txt
+# 3. Test model: python production_model.py
+# 4. Start API: python model_api.py
+# 5. Access at: http://localhost:8001</pre>
+                </div>
+              </div>
+            </div>
+          `;
+
+          resultsDiv.innerHTML = html;
+          resultsDiv.style.display = 'block';
+          resultsDiv.scrollIntoView({ behavior: 'smooth' });
+
+        } catch (error) {
+          console.error('Error displaying results:', error);
+          resultsDiv.innerHTML = `
+            <div class="status error">
+              <h4>❌ Error displaying results</h4>
+              <p>${error.message}</p>
+              <div class="json-viewer">
+                <pre>${JSON.stringify(result, null, 2)}</pre>
+              </div>
+            </div>
+          `;
+          resultsDiv.style.display = 'block';
+        }
+      }
+
+      function switchTab(tabName) {
+        // Hide all tab contents
+        const contents = document.querySelectorAll('.tab-content');
+        contents.forEach(content => content.classList.remove('active'));
+        
+        // Remove active class from all tabs
+        const tabs = document.querySelectorAll('.tab');
+        tabs.forEach(tab => tab.classList.remove('active'));
+        
+        // Show selected tab content
+        document.getElementById(`${tabName}-tab`).classList.add('active');
+        
+        // Add active class to clicked tab
+        event.target.classList.add('active');
+      }
+
+      function showStatus(type, message, persistent = false) {
+        const statusDiv = document.getElementById('status');
+        statusDiv.className = `status ${type}`;
+        statusDiv.innerHTML = message;
+        statusDiv.style.display = 'block';
+        
+        if (!persistent && type === 'success') {
+          setTimeout(() => {
+            statusDiv.style.display = 'none';
+          }, 3000);
+        }
+      }
+
+      // Auto-save form data
+      function saveFormData() {
+        try {
+          const formData = {
+            user_query: document.getElementById('user_query').value,
+            target_column: document.getElementById('target_column').value,
+            task_type: document.getElementById('task_type').value,
+            business_context: document.getElementById('business_context').value,
+            time_budget: document.getElementById('time_budget').value
+          };
+          localStorage.setItem('taskpilot_form_data', JSON.stringify(formData));
+        } catch (e) {
+          console.log('Could not save form data:', e);
+        }
+      }
+
+      function loadFormData() {
+        try {
+          const savedData = localStorage.getItem('taskpilot_form_data');
+          if (savedData) {
+            const formData = JSON.parse(savedData);
+            document.getElementById('user_query').value = formData.user_query || '';
+            document.getElementById('target_column').value = formData.target_column || '';
+            document.getElementById('task_type').value = formData.task_type || '';
+            document.getElementById('business_context').value = formData.business_context || '';
+            document.getElementById('time_budget').value = formData.time_budget || '600';
+          }
+        } catch (e) {
+          console.log('Could not load saved form data:', e);
+        }
+      }
+
+      // Save form data on input changes
+      ['user_query', 'target_column', 'task_type', 'business_context', 'time_budget'].forEach(id => {
+        const element = document.getElementById(id);
+        if (element) {
+          element.addEventListener('input', saveFormData);
+          element.addEventListener('change', saveFormData);
+        }
+      });
+
+      // Add example datasets functionality
+      function loadExample(exampleType) {
+        const examples = {
+          'customer_churn': {
+            user_query: 'Predict which customers are likely to churn based on their usage patterns and demographics',
+            target_column: 'churn',
+            task_type: 'classification',
+            business_context: 'Telecommunications company wants to identify customers at risk of leaving to implement targeted retention strategies'
+          },
+          'house_prices': {
+            user_query: 'Predict house prices based on location, size, and property features',
+            target_column: 'price',
+            task_type: 'regression',
+            business_context: 'Real estate company needs accurate pricing models for property valuation and market analysis'
+          },
+          'sales_forecast': {
+            user_query: 'Forecast monthly sales based on historical data and seasonal trends',
+            target_column: 'sales',
+            task_type: 'regression',
+            business_context: 'Retail company wants to optimize inventory management and staffing based on predicted sales volumes'
+          }
+        };
+
+        if (examples[exampleType]) {
+          const example = examples[exampleType];
+          document.getElementById('user_query').value = example.user_query;
+          document.getElementById('target_column').value = example.target_column;
+          document.getElementById('task_type').value = example.task_type;
+          document.getElementById('business_context').value = example.business_context;
+          saveFormData();
+          showStatus('info', `📝 Loaded ${exampleType.replace('_', ' ')} example`);
+        }
+      }
+
+      // Make functions available globally
+      window.switchTab = switchTab;
+      window.loadExample = loadExample;
+      
+      console.log('🚀 TaskPilot AI Frontend Ready');
+      console.log('💡 Tip: Use Ctrl+Enter to submit the form quickly');
+    </script>
+  </body>
+</html>'''
+        
+        return html_content
+        
+    except Exception as e:
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>TaskPilot AI - Error</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }}
+                .error {{ background: #f8d7da; color: #721c24; padding: 20px; border-radius: 5px; }}
+            </style>
+        </head>
+        <body>
+            <div class="error">
+                <h2>🚀 TaskPilot AI</h2>
+                <p>Error loading interface: {e}</p>
+                <p><a href="/docs">View API Documentation</a></p>
+            </div>
+        </body>
+        </html>
+        """
