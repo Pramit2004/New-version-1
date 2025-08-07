@@ -1356,7 +1356,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
 # Serve the HTML interface at the root
-@app.get("/", response_class=HTMLResponse)
+@app.get("/frontend", response_class=HTMLResponse)
 def read_root():
     """Serve the main TaskPilot AI interface"""
     try:
